@@ -1,0 +1,115 @@
+#include "navier-stokes/centered.h"
+#include "two-phase.h"
+#include "tension.h"
+#include "tag.h"
+#include "view.h"
+
+// define physical constants and window size
+double drop_dia = 1e-3; // m
+double SIGMA = 72.8e-3; //N/m
+double box_length = 30e-3; // m
+double start_height = 20e-3; //m
+
+// Define relevant dimensionless numbers
+double Re;
+double We;
+
+// create scalar field f0[] to hold the fluid interface
+scalar f0[];
+
+// define max refinement level for grid
+int MAXLEVEL = 8;
+
+// define error tolerance
+double uemax = 0.05;
+
+// define initial velocity
+double u0 = 3.; // m/s
+
+// boundary conditions
+u.t[bottom] = dirichlet(0.);
+u.n[bottom] = dirichlet(0.);
+f[bottom] = 0;
+
+int main(){
+    init_grid(64);
+    origin(-box_length/2, 0, -box_length/2);
+
+    size(box_length);
+
+    // define the densities and viscosities of the two fluids
+        // fluid 1: Water at room temp
+        // fluid 2: Air at room temp
+    rho1 = 997.; // kg/m^3
+    rho2 = 1.293; // kg/m^3
+    mu1 = 0.89e-3; // Pa*s
+    mu2 = 1.8e-5; // Pa*s
+
+    // define the surface tension coefficient
+    f.sigma = SIGMA;
+    
+    // Calculate Reynolds number for the impact droplet
+    Re = rho1 * u0 * drop_dia / mu1;
+    We = rho1 * drop_dia *sq(u0) / f.sigma;
+
+    run();
+}
+
+event init(i=0){
+    
+    // refine grid within a circular region with radius sqrt(2) times the radius of the droplet
+    refine((sq(x)+sq(y-start_height) + sq(z) < 2*sq(drop_dia/2)) && (level<MAXLEVEL));
+
+    // set up the interface between the fluids.
+        // f0 takes on the value of 1 inside the circle and zero outside
+    fraction(f0, sq(drop_dia/2) - sq(x)-sq(y-start_height)- sq(z));
+    f0.refine = f0.prolongation = fraction_refine;
+    restriction({f0});
+
+    // set the value of the field f[] to f0[] at each point in the domain
+    foreach(){
+        f[] = f0[];
+        u.y[] = -u0*f[];
+    }
+    boundary({f, u.x});
+}
+
+event initial_graphics_display(i=0){
+    scalar pid[];
+    foreach()
+        pid[] = fmod(pid()*(npe() + 37), npe());
+
+    view (camera="front", tx=0., ty=-0.5, width=1600, height=1200);
+    clear();
+    draw_vof ("f");
+
+    save("init_img.png");
+}
+
+event log_status(i++){
+    // print out the iteration number and time 
+    printf("%d %g\n", i, t);
+}
+
+event end(t=0.04){
+    // Print the Reynold's number and Weber number for this test case
+    printf("Re: %d, We:%d\n", (int) round(Re), (int) round(We));
+}
+
+event movie(t+=0.001){
+    scalar pid[];
+    foreach()
+        pid[] = fmod(pid()*(npe() + 37), npe());
+    view(tx=0, ty=-0.5, width=800, height=800);
+    clear();
+    draw_vof("f");
+    squares("u.y", linear=true, spread=10);
+    box();
+    char filename[50];
+    sprintf(filename, "output_vids/Re=%d_We=%d.mp4", (int) round(Re), (int) round(We));
+    save(filename);
+}
+
+event adapt(i++){
+    adapt_wavelet({f, p, u}, (double[]){0.01,0.01,0.01,0.01,0.01}, maxlevel=MAXLEVEL);
+}
